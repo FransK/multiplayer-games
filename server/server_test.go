@@ -121,7 +121,7 @@ func Test_chatServer(t *testing.T) {
 //
 // chatServer logs will be logged via t.Logf.
 func setupTest(t *testing.T) (url string, closeFn func()) {
-	cs := newChatServer()
+	cs := newGameServer()
 	cs.logf = t.Logf
 
 	// To ensure tests run quickly under even -race.

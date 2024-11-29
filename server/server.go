@@ -15,8 +15,8 @@ import (
 	"github.com/coder/websocket"
 )
 
-// chatServer enables broadcasting to a set of subscribers.
-type chatServer struct {
+// gameServer enables broadcasting to a set of subscribers.
+type gameServer struct {
 	// subscriberMessageBuffer controls the max number
 	// of messages that can be queued for a subscriber
 	// before it is kicked.
@@ -40,9 +40,9 @@ type chatServer struct {
 	subscribers   map[*subscriber]struct{}
 }
 
-// newChatServer constructs a chatServer with the defaults.
-func newChatServer() *chatServer {
-	cs := &chatServer{
+// newGameServer constructs a gameServer with the defaults.
+func newGameServer() *gameServer {
+	cs := &gameServer{
 		subscriberMessageBuffer: 16,
 		logf:                    log.Printf,
 		subscribers:             make(map[*subscriber]struct{}),
@@ -63,13 +63,13 @@ type subscriber struct {
 	closeSlow func()
 }
 
-func (cs *chatServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (cs *gameServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cs.serveMux.ServeHTTP(w, r)
 }
 
 // subscribeHandler accepts the WebSocket connection and then subscribes
 // it to all future messages.
-func (cs *chatServer) subscribeHandler(w http.ResponseWriter, r *http.Request) {
+func (cs *gameServer) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	err := cs.subscribe(w, r)
 	if errors.Is(err, context.Canceled) {
 		return
@@ -86,7 +86,7 @@ func (cs *chatServer) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 
 // publishHandler reads the request body with a limit of 8192 bytes and then publishes
 // the received message.
-func (cs *chatServer) publishHandler(w http.ResponseWriter, r *http.Request) {
+func (cs *gameServer) publishHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
@@ -111,7 +111,7 @@ func (cs *chatServer) publishHandler(w http.ResponseWriter, r *http.Request) {
 //
 // It uses CloseRead to keep reading from the connection to process control
 // messages and cancel the context if the connection drops.
-func (cs *chatServer) subscribe(w http.ResponseWriter, r *http.Request) error {
+func (cs *gameServer) subscribe(w http.ResponseWriter, r *http.Request) error {
 	var mu sync.Mutex
 	var c *websocket.Conn
 	var closed bool
@@ -160,7 +160,7 @@ func (cs *chatServer) subscribe(w http.ResponseWriter, r *http.Request) error {
 // publish publishes the msg to all subscribers.
 // It never blocks and so messages to slow subscribers
 // are dropped.
-func (cs *chatServer) publish(msg []byte) {
+func (cs *gameServer) publish(msg []byte) {
 	cs.subscribersMu.Lock()
 	defer cs.subscribersMu.Unlock()
 
@@ -176,14 +176,14 @@ func (cs *chatServer) publish(msg []byte) {
 }
 
 // addSubscriber registers a subscriber.
-func (cs *chatServer) addSubscriber(s *subscriber) {
+func (cs *gameServer) addSubscriber(s *subscriber) {
 	cs.subscribersMu.Lock()
 	cs.subscribers[s] = struct{}{}
 	cs.subscribersMu.Unlock()
 }
 
 // deleteSubscriber deletes the given subscriber.
-func (cs *chatServer) deleteSubscriber(s *subscriber) {
+func (cs *gameServer) deleteSubscriber(s *subscriber) {
 	cs.subscribersMu.Lock()
 	delete(cs.subscribers, s)
 	cs.subscribersMu.Unlock()
