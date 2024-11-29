@@ -1,4 +1,4 @@
-module websocket
+module github.com/fransk/multiplayer-games
 
 go 1.23.3
 
