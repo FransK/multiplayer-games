@@ -13,6 +13,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/coder/websocket"
+	"github.com/fransk/multiplayer-games/games"
 )
 
 // gameServer enables broadcasting to a set of subscribers.
@@ -38,6 +39,9 @@ type gameServer struct {
 
 	subscribersMu sync.Mutex
 	subscribers   map[*subscriber]struct{}
+
+	// game is the currently loaded game
+	game Game
 }
 
 // newGameServer constructs a gameServer with the defaults.
@@ -47,6 +51,7 @@ func newGameServer() *gameServer {
 		logf:                    log.Printf,
 		subscribers:             make(map[*subscriber]struct{}),
 		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*100), 8),
+		game:                    games.NewHilo(), // TODO: let user choose the game
 	}
 	cs.serveMux.Handle("/", http.FileServer(http.Dir("../web")))
 	cs.serveMux.HandleFunc("/subscribe", cs.subscribeHandler)
@@ -59,6 +64,7 @@ func newGameServer() *gameServer {
 // Messages are sent on the msgs channel and if the client
 // cannot keep up with the messages, closeSlow is called.
 type subscriber struct {
+	id        string
 	msgs      chan []byte
 	closeSlow func()
 }
@@ -98,6 +104,15 @@ func (cs *gameServer) publishHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// send the message to the game
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	cs.game.HandleMsg(host, msg)
+
+	// update the other users
 	cs.publish(msg)
 
 	w.WriteHeader(http.StatusAccepted)
@@ -116,6 +131,7 @@ func (cs *gameServer) subscribe(w http.ResponseWriter, r *http.Request) error {
 	var c *websocket.Conn
 	var closed bool
 	s := &subscriber{
+		id:   r.RemoteAddr,
 		msgs: make(chan []byte, cs.subscriberMessageBuffer),
 		closeSlow: func() {
 			mu.Lock()
