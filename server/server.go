@@ -76,6 +76,7 @@ func (cs *gameServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // subscribeHandler accepts the WebSocket connection and then subscribes
 // it to all future messages.
 func (cs *gameServer) subscribeHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("subscribe handler called")
 	err := cs.subscribe(w, r)
 	if errors.Is(err, context.Canceled) {
 		return
@@ -105,12 +106,7 @@ func (cs *gameServer) publishHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// send the message to the game
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
-	cs.game.HandleMsg(host, msg)
+	cs.game.HandleMsg(r.RemoteAddr, msg)
 
 	// update the other users
 	cs.publish(msg)
@@ -134,6 +130,7 @@ func (cs *gameServer) subscribe(w http.ResponseWriter, r *http.Request) error {
 		id:   r.RemoteAddr,
 		msgs: make(chan []byte, cs.subscriberMessageBuffer),
 		closeSlow: func() {
+			log.Printf("calling close on subscriber with id %v", r.RemoteAddr)
 			mu.Lock()
 			defer mu.Unlock()
 			closed = true
@@ -158,7 +155,11 @@ func (cs *gameServer) subscribe(w http.ResponseWriter, r *http.Request) error {
 	mu.Unlock()
 	defer c.CloseNow()
 
-	ctx := c.CloseRead(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*60)
+	defer cancel()
+
+	l := rate.NewLimiter(rate.Every(time.Millisecond*100), 10)
+	go cs.listen(ctx, w, r, c, l)
 
 	for {
 		select {
@@ -168,9 +169,52 @@ func (cs *gameServer) subscribe(w http.ResponseWriter, r *http.Request) error {
 				return err
 			}
 		case <-ctx.Done():
+			log.Printf("calling done")
 			return ctx.Err()
 		}
 	}
+}
+
+func (cs *gameServer) listen(ctx context.Context, w http.ResponseWriter, r *http.Request, c *websocket.Conn, l *rate.Limiter) error {
+	for {
+		err := cs.echo(ctx, w, r, c, l)
+		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+			return nil
+		}
+		if err != nil {
+			cs.logf("failed to echo with %v: %v", r.RemoteAddr, err)
+			return err
+		}
+	}
+}
+
+func (cs *gameServer) echo(ctx context.Context, w http.ResponseWriter, r *http.Request, c *websocket.Conn, l *rate.Limiter) error {
+	err := l.Wait(ctx)
+	if err != nil {
+		return err
+	}
+
+	typ, body, err := c.Reader(ctx)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("typ: %v, r: %v", typ, r)
+	msg, err := io.ReadAll(body)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+		return err
+	}
+	log.Printf("msg: %s", msg)
+
+	// send the message to the game
+	cs.game.HandleMsg(r.RemoteAddr, msg)
+
+	// update the other users
+	cs.publish(msg)
+
+	// no errors
+	return nil
 }
 
 // publish publishes the msg to all subscribers.
